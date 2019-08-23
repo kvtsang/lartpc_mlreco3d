@@ -8,6 +8,13 @@ from mlreco.utils.gnn.primary import get_em_primary_info
 from mlreco.utils.dbscan import dbscan_types, dbscan_groups
 from mlreco.utils.groups import get_group_types, filter_duplicate_voxels, filter_nonimg_voxels
 
+# -----------------------
+# User parsers by kvtsang
+# -----------------------
+from mlreco.extras.parsers import \
+        make_sixtypes_label, \
+        parse_run_info
+# -----------------------
 
 def parse_sparse3d_scn(data):
     """
