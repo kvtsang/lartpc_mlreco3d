@@ -13,7 +13,8 @@ from mlreco.utils.groups import get_group_types, filter_duplicate_voxels, filter
 # -----------------------
 from mlreco.extras.parsers import \
         make_sixtypes_label, \
-        parse_run_info
+        parse_run_info, \
+        make_overlaps
 # -----------------------
 
 def parse_sparse3d_scn(data):
