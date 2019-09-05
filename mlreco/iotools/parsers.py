@@ -8,6 +8,14 @@ from mlreco.utils.gnn.primary import get_em_primary_info
 from mlreco.utils.dbscan import dbscan_types, dbscan_groups
 from mlreco.utils.groups import get_group_types, filter_duplicate_voxels, filter_nonimg_voxels
 
+# -------------------------
+# custom parsers by kvtsang
+# -------------------------
+from mlreco.extras.parsers import \
+        parse_run_info, \
+        make_overlaps
+# -------------------------
+
 def parse_sparse2d_scn(data):
     """
     A function to retrieve sparse tensor input from larcv::EventSparseTensor3D object
