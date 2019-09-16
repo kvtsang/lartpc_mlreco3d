@@ -120,7 +120,17 @@ class CSVData:
             self._fout.write('\n')
             self._str+='\n'
 
-        self._fout.write(self._str.format(*(self._dict.values())))
+        # FIXME(2019-09-13 kvtsang) TypeError
+        # Cannot print 'first_id', which is a list
+        # ==== Original ====
+        #print(self._dict)
+        #self._fout.write(self._str.format(*(self._dict.values())))
+
+        # ==== Hack =======
+        tmp = self._dict.copy()
+        tmp['first_id'] = 0
+        self._fout.write(self._str.format(*(tmp.values())))
+        # ------------------
 
     def flush(self):
         if self._fout: self._fout.flush()
