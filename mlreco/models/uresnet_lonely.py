@@ -129,6 +129,9 @@ class UResNet(torch.nn.Module):
         if self._ghost:
             self.linear_ghost = torch.nn.Linear(m, 2)
 
+        # TODO add sppn flag
+        self.linear_sppn = torch.nn.Linear(m, 2)
+
     def forward(self, input):
         """
         point_cloud is a list of length minibatch size (assumes mbs = 1)
@@ -170,6 +173,11 @@ class UResNet(torch.nn.Module):
         }
         if self._ghost:
             res['ghost'] = [x_ghost]
+
+        # TODO add sppn flag
+        x_sppn = self.linear_sppn(x)
+        res['sppn'] = [x_sppn]
+
         return res
 
 
@@ -220,10 +228,12 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         If ghost_label > -1, then we perform only ghost segmentation.
         """
         assert len(result['segmentation']) == len(label)
-        batch_ids = [d[:, -2] for d in label]
+        batch_ids = [d[:, 3] for d in label]
         uresnet_loss, uresnet_acc = 0., 0.
         mask_loss, mask_acc = 0., 0.
         ghost2ghost, nonghost2nonghost = 0., 0.
+        sppn_loss = 0.
+        sppn_acc = 0.
         count = 0
         for i in range(len(label)):
             for b in batch_ids[i].unique():
@@ -232,6 +242,28 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                 event_segmentation = result['segmentation'][i][batch_index]  # (N, num_classes)
                 event_label = label[i][batch_index][:, -1][:, None]  # (N, 1)
                 event_label = torch.squeeze(event_label, dim=-1).long()
+
+                # TODO sppn flag
+                # FIXME label index
+
+                sppn_label = label[i][batch_index][:, -2][:, None]  # (N, 1)
+                sppn_label = torch.squeeze(sppn_label, dim=-1).long()
+       
+                event_sppn= result['sppn'][i][batch_index]  # (N, 2)
+
+                mask_label = (sppn_label == 1).long()
+                n_interesting = (mask_label == 1).sum().float()
+                n_boring = (mask_label == 0).sum().float()
+                fraction = n_interesting / (n_interesting + n_boring)
+                weight = torch.stack([fraction, 1. - fraction]).float()
+
+                sppn_loss += torch.nn.functional.cross_entropy(event_sppn, mask_label, weight=weight)
+
+                with torch.no_grad():
+                    pred = torch.argmax(event_sppn, dim=-1)
+                    sppn_acc += pred.eq_(sppn_label).sum().item() / float(pred.nelement())
+
+
                 if self._ghost_label > -1:
                     event_label = (event_label == self._ghost_label).long()
 
@@ -272,6 +304,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                     event_segmentation = event_segmentation[mask]
                     event_label = event_label[mask]
 
+
                 if event_label.shape[0] > 0:  # FIXME how to handle empty mask?
                     # Loss for semantic segmentation
                     loss_seg = self.cross_entropy(event_segmentation, event_label)
@@ -282,6 +315,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                         predicted_labels = torch.argmax(event_segmentation, dim=-1)
                         acc = predicted_labels.eq_(event_label).sum().item() / float(predicted_labels.nelement())
                         uresnet_acc += acc
+
 
                 count += 1
 
@@ -301,4 +335,14 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                 'accuracy': uresnet_acc/count,
                 'loss': uresnet_loss/count
             }
+        
+        # TODO sppn flag
+        results['loss'] += sppn_loss / count
+        results['sppn_acc'] = sppn_acc / count
+        results['sppn_loss'] = sppn_loss / count
+
+        # FIXME to-be-removed
+        results['loss'] = results['sppn_loss'] 
+        results['accuracy'] = results['sppn_acc'] 
+
         return results
