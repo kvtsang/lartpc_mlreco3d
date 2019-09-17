@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 import torch
-
+import numpy as np
 
 class UResNet(torch.nn.Module):
     """
@@ -232,8 +232,9 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         uresnet_loss, uresnet_acc = 0., 0.
         mask_loss, mask_acc = 0., 0.
         ghost2ghost, nonghost2nonghost = 0., 0.
-        sppn_loss = 0.
         sppn_acc = 0.
+        sppn_seg_loss = 0.
+        sppn_dist_loss = 0.
         count = 0
         for i in range(len(label)):
             for b in batch_ids[i].unique():
@@ -243,6 +244,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                 event_label = label[i][batch_index][:, -1][:, None]  # (N, 1)
                 event_label = torch.squeeze(event_label, dim=-1).long()
 
+                # -------------------------------------------------------------------------------------
                 # TODO sppn flag
                 # FIXME label index
 
@@ -257,12 +259,29 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                 fraction = n_interesting / (n_interesting + n_boring)
                 weight = torch.stack([fraction, 1. - fraction]).float()
 
-                sppn_loss += torch.nn.functional.cross_entropy(event_sppn, mask_label, weight=weight)
+                sppn_seg_loss += torch.nn.functional.cross_entropy(event_sppn, mask_label, weight=weight)
 
                 with torch.no_grad():
-                    pred = torch.argmax(event_sppn, dim=-1)
-                    sppn_acc += pred.eq_(sppn_label).sum().item() / float(pred.nelement())
+                    sppn_pred = torch.argmax(event_sppn, dim=-1)
+                    sppn_score = torch.softmax(event_sppn, dim=1)[:, 1]
+                    sppn_acc += sppn_pred.eq_(sppn_label).sum().item() / float(sppn_pred.nelement())
 
+                # distance loss
+                # FIXME(2019-09-16 kvtsang) dbscan with GPU?
+                voxels = label[i][batch_index][:, :3]
+                pts_true = voxels[sppn_label == 1].cpu().detach().numpy()
+
+                # TODO(2019-09-16 kvtsang) get eps from cfg
+                pts_pred = _merge_ppn(voxels[sppn_pred == 1].cpu().detach().numpy(), 
+                                      weights=sppn_score[sppn_pred == 1].cpu().detach().numpy(),
+                                      eps=1.5)
+
+                from scipy.spatial.distance import cdist
+                dist = cdist(pts_true, pts_pred)
+                dist_from_pred = dist.min(axis=0)
+                dist_from_true = dist.min(axis=1)
+                sppn_dist_loss += dist_from_true.mean()
+                # -------------------------------------------------------------------------------------
 
                 if self._ghost_label > -1:
                     event_label = (event_label == self._ghost_label).long()
@@ -337,12 +356,46 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
             }
         
         # TODO sppn flag
-        results['loss'] += sppn_loss / count
+        results['sppn_seg_loss'] = sppn_seg_loss / count
+        results['sppn_dist_loss'] = sppn_dist_loss / count
+        results['sppn_loss'] = results['sppn_seg_loss'] + results['sppn_dist_loss']
         results['sppn_acc'] = sppn_acc / count
-        results['sppn_loss'] = sppn_loss / count
 
         # FIXME to-be-removed
         results['loss'] = results['sppn_loss'] 
         results['accuracy'] = results['sppn_acc'] 
 
         return results
+
+def _merge_ppn(voxels, weights=None, eps=1):
+    """
+    Merge ppn prediction using DBSCAN
+
+    Arguments
+    ---------
+    voxels: (N, 3) array_like
+       predicted ppn voxels
+    weights: (N, ) array_like, optional
+       weighting for ppn cluster, default is None
+    eps: float, optional
+       maxium distance (in voxel) to merge proposed points, default is 1 voxel
+
+    Returns
+    -------
+    output: (M, 3) ndarray
+       merged output points, M <= N
+    """ 
+
+    from sklearn.cluster import dbscan
+    labels = dbscan(voxels, eps=2, min_samples=1)[1]
+    n = max(0, max(labels))
+
+    output = []
+    for i in range(n):
+        mask = labels == i
+        if weights is None:
+            pt = voxels[mask].mean(axis=0)
+        else:
+            pt = np.average(voxels[mask], weights=weights[mask], axis=0)
+        output.append(pt)
+    return np.asarray(output) 
