@@ -30,11 +30,8 @@ class LArCVDataset(Dataset):
         #self._files = _list_files(data_dirs,data_key,limit_num_files)
         self._files = []
         for key in data_keys:
-            fs = glob.glob(key)
-            for f in fs:
-                self._files.append(f)
-                if len(self._files) >= limit_num_files: break
-            if len(self._files) >= limit_num_files: break
+            self._files.extend(glob.glob(key))
+        self._files = self._files[:limit_num_files]
 
         if len(self._files)<1:
             raise FileNotFoundError
@@ -97,7 +94,7 @@ class LArCVDataset(Dataset):
     def create(cfg):
         data_schema = cfg['schema']
         data_keys   = cfg['data_keys']
-        lnf         = 0 if not 'limit_num_files' in cfg else int(cfg['limit_num_files'])
+        lnf         = None  if not 'limit_num_files' in cfg else int(cfg['limit_num_files'])
         lns         = 0 if not 'limit_num_samples' in cfg else int(cfg['limit_num_samples'])
         event_list  = None
         if 'event_list' in cfg:
