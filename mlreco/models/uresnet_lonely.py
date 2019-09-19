@@ -209,6 +209,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         self._alpha = self._cfg.get('alpha', 1.0)
         self._beta = self._cfg.get('beta', 1.0)
         self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
+        self._include_sppn_dist_loss = self._cfg.get('include_sppn_dist_loss', False)
 
     def distances(self, v1, v2):
         v1_2 = v1.unsqueeze(1).expand(v1.size(0), v2.size(0), v1.size(1)).double()
@@ -261,26 +262,28 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
 
                 sppn_seg_loss += torch.nn.functional.cross_entropy(event_sppn, mask_label, weight=weight)
 
+                # sPPN predictions and accuracy
                 with torch.no_grad():
                     sppn_pred = torch.argmax(event_sppn, dim=-1)
                     sppn_score = torch.softmax(event_sppn, dim=1)[:, 1]
                     sppn_acc += sppn_pred.eq_(sppn_label).sum().item() / float(sppn_pred.nelement())
 
                 # distance loss
-                # FIXME(2019-09-16 kvtsang) dbscan with GPU?
-                voxels = label[i][batch_index][:, :3]
-                pts_true = voxels[sppn_label == 1].cpu().detach().numpy()
+                if self._include_sppn_dist_loss:
+                    # FIXME(2019-09-16 kvtsang) dbscan with GPU?
+                    voxels = label[i][batch_index][:, :3]
+                    pts_true = voxels[sppn_label == 1].cpu().detach().numpy()
 
-                # TODO(2019-09-16 kvtsang) get eps from cfg
-                pts_pred = _merge_ppn(voxels[sppn_pred == 1].cpu().detach().numpy(), 
-                                      weights=sppn_score[sppn_pred == 1].cpu().detach().numpy(),
-                                      eps=1.5)
+                    # TODO(2019-09-16 kvtsang) get eps from cfg
+                    pts_pred = _merge_ppn(voxels[sppn_pred == 1].cpu().detach().numpy(), 
+                                          weights=sppn_score[sppn_pred == 1].cpu().detach().numpy(),
+                                          eps=1.5)
 
-                from scipy.spatial.distance import cdist
-                dist = cdist(pts_true, pts_pred)
-                dist_from_pred = dist.min(axis=0)
-                dist_from_true = dist.min(axis=1)
-                sppn_dist_loss += dist_from_true.mean()
+                    from scipy.spatial.distance import cdist
+                    dist = cdist(pts_true, pts_pred)
+                    dist_from_pred = dist.min(axis=0)
+                    dist_from_true = dist.min(axis=1)
+                    sppn_dist_loss += dist_from_true.mean()
                 # -------------------------------------------------------------------------------------
 
                 if self._ghost_label > -1:
@@ -297,6 +300,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                     weight = torch.stack([fraction, 1. - fraction]).float()
                     loss_mask = torch.nn.functional.cross_entropy(event_ghost, mask_label, weight=weight)
                     mask_loss += loss_mask
+
                     # mask_loss += torch.mean(loss_mask)
 
                     # Accuracy of ghost mask: fraction of correcly predicted
@@ -356,14 +360,13 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
             }
         
         # TODO sppn flag
+        results['sppn_acc'] = sppn_acc / count
         results['sppn_seg_loss'] = sppn_seg_loss / count
         results['sppn_dist_loss'] = sppn_dist_loss / count
         results['sppn_loss'] = results['sppn_seg_loss'] + results['sppn_dist_loss']
-        results['sppn_acc'] = sppn_acc / count
 
-        # FIXME to-be-removed
-        results['loss'] = results['sppn_loss'] 
-        results['accuracy'] = results['sppn_acc'] 
+        # TODO(2019-09-17 kvtsang) weighting for sppn_loss
+        results['loss'] += results['sppn_loss'] 
 
         return results
 
