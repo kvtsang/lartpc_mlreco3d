@@ -1,0 +1,3 @@
+[submodule "mlreco/extras"]
+	path = mlreco/extras
+	url = git@github.com:kvtsang/mlreco_extras.git
