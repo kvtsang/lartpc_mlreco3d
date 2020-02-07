@@ -4,6 +4,33 @@ from __future__ import print_function
 import torch
 from mlreco.models.layers.extract_feature_map import Selection, Multiply, AddLabels, GhostMask
 import numpy as np
+from sklearn.cluster import dbscan
+
+def prepare_ppn_multi_type(particles, n_classes, eps=1.99):
+    """
+    A function to merge ppn points. It allows multiple segmentation type for a single point.
+    """
+    #TODO(2020-02-07 kvtsang) this function should be moved to somewhere else
+
+    voxels = particles[:, :3]
+    labels = particles[:, -1]
+
+    #FIXME(2020-02-07 kvtsang) dbscan for gpu
+    #TypeError: can't convert CUDA tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first. 
+    groups = dbscan(voxels, eps=eps, min_samples=1)[1]
+    n_grps = groups.max() + 1
+
+    out_voxels = torch.empty(n_grps, 3, dtype=torch.float64)
+    out_labels = torch.zeros(n_grps, n_classes, dtype=torch.float64)
+
+    for g in range(n_grps):
+        mask = torch.tensor(groups == g)
+        out_voxels[g] = voxels[mask].mean(dim=0)
+        
+        uid = torch.unique(labels[mask]).long()
+        out_labels[g][uid] = 1
+    
+    return out_voxels, out_labels
 
 
 def define_ppn12(ppn1_size, ppn2_size, spatial_size, num_strides):
@@ -231,7 +258,8 @@ class PPNLoss(torch.nn.modules.loss._Loss):
         self._dimension = self._cfg.get('data_dim', 3)
         self._num_strides = self._cfg.get('num_strides', 5)
         self._num_classes = self._cfg.get('num_classes', 5)
-        self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
+        #self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
+        self.bce = torch.nn.BCEWithLogitsLoss()
 
         self.half_stride = int((self._num_strides-1)/2.0)
         self.half_stride2 = int(self._num_strides/2.0)
@@ -295,9 +323,15 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                 event_ppn1_scores = result['ppn1'][i][ppn1_batch_index][:, -2:]  # (N1, 2)
                 event_ppn2_scores = result['ppn2'][i][ppn2_batch_index][:, -2:]  # (N2, 2)
 
+                # multiple ppn type
+                event_label, event_types_label = prepare_ppn_multi_type(
+                        event_particles[event_particles[:, -2] == b], 
+                        self._num_classes,
+                        eps=1.99)
+
                 # PPN stuff
-                event_label = event_particles[event_particles[:, -2] == b][:, :-2]  # (N_gt, 3)
-                event_types_label = event_particles[event_particles[:, -2] == b][:, -1]
+                #event_label = event_particles[event_particles[:, -2] == b][:, :-2]  # (N_gt, 3)
+                #event_types_label = event_particles[event_particles[:, -2] == b][:, -1]
                 if event_label.size(0) > 0:
                     # Mask: only consider pixels that were selected
                     event_mask = result['mask_ppn2'][i][batch_index]
@@ -480,15 +514,17 @@ class PPNLoss(torch.nn.modules.loss._Loss):
 
                         # Loss for point type
                         labels = event_types_label[torch.argmin(distances_positives, dim=0)]
-                        loss_type = torch.mean(self.cross_entropy(event_types[positives].double(), labels.long()))
+                        loss_type = self.bce(event_types[positives].double(), labels.double())
 
                         # Accuracy for point type
                         predicted_types = torch.argmax(event_types[positives], dim=-1)
-                        acc_type = (predicted_types == labels.long()).sum().item() / float(predicted_types.nelement())
+                        #FIXME(2020-02-07 kvtsang) Lazy to fix accurancy calculation 
+                        #acc_type = (predicted_types == labels.long()).sum().item() / float(predicted_types.nelement())
+                        acc_type = 0.
 
                         total_acc_type += acc_type
-                        total_loss_type += loss_type
-                        total_loss += loss_type.float()
+                        total_loss_type += loss_type 
+                        total_loss += loss_type.float() 
 
                     total_loss_ppn1 += loss_seg_ppn1
                     total_loss_ppn2 += loss_seg_ppn2
