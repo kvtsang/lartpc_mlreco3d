@@ -17,11 +17,15 @@ def prepare_ppn_multi_type(particles, n_classes, eps=1.99):
 
     #FIXME(2020-02-07 kvtsang) dbscan for gpu
     #TypeError: can't convert CUDA tensor to numpy. Use Tensor.cpu() to copy the tensor to host memory first. 
+    if voxels.is_cuda:
+        voxels = voxels.cpu()
+
     groups = dbscan(voxels, eps=eps, min_samples=1)[1]
     n_grps = groups.max() + 1
 
-    out_voxels = torch.empty(n_grps, 3, dtype=torch.float64)
-    out_labels = torch.zeros(n_grps, n_classes, dtype=torch.float64)
+    device = particles.device
+    out_voxels = torch.empty(n_grps, 3, dtype=torch.float64, device=device)
+    out_labels = torch.zeros(n_grps, n_classes, dtype=torch.float64, device=device)
 
     for g in range(n_grps):
         mask = torch.tensor(groups == g)
@@ -517,10 +521,8 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                         loss_type = self.bce(event_types[positives].double(), labels.double())
 
                         # Accuracy for point type
-                        predicted_types = torch.argmax(event_types[positives], dim=-1)
-                        #FIXME(2020-02-07 kvtsang) Lazy to fix accurancy calculation 
-                        #acc_type = (predicted_types == labels.long()).sum().item() / float(predicted_types.nelement())
-                        acc_type = 0.
+                        predicted_types = torch.sigmoid(event_types[positives]) > 0.5
+                        acc_type = (predicted_types.long() == labels.long()).sum().item()  / float(predicted_types.nelement())
 
                         total_acc_type += acc_type
                         total_loss_type += loss_type 
