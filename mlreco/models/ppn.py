@@ -319,7 +319,7 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                         event_ghost = 1.0-torch.argmax(result['ghost'][i][batch_index], dim=1)
                         # event_ghost = segment_label[i][batch_index][:, -1] < self._num_classes
                         # print('event_ghost', (event_ghost>0).sum(), event_ghost.size(), (event_mask>0).sum(), event_mask.size())
-                        event_mask = event_mask & event_ghost.byte()
+                        event_mask = event_mask & event_ghost.bool()
 
                     if event_mask.int().sum() == 0:
                         print('event_mask after downsample = 0')
@@ -335,7 +335,7 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                     event_ppn2_mask = (~(result['mask_ppn1'][i][ppn2_batch_index] == 0)).any(dim=1)
                     # event_ppn2_mask = torch.nn.functional.softmax(result['ppn2'][i][ppn2_batch_index][:, 4:], dim=1)[:, 1] > self._score_threshold
                     if self._downsample_ghost:
-                        event_ppn2_mask = event_ppn2_mask & result['ghost_mask2'][i][ppn2_batch_index].byte().reshape((-1,))
+                        event_ppn2_mask = event_ppn2_mask & result['ghost_mask2'][i][ppn2_batch_index].bool().reshape((-1,))
                         # l = segment_label[i][batch_index]
                         # coords = torch.floor(l[:, :3] / float(2**self.half_stride) ).cpu().detach().numpy()
                         # _, indices = np.unique(coords, axis=0, return_index=True)
@@ -355,7 +355,7 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                     # predicted ghost mask applied at this spatial size
                     # event_mask_ppn1 = torch.nn.functional.softmax(result['ppn1'][i][ppn1_batch_index][:, 4:], dim=1)[:, 1] > self._score_threshold
                     if self._downsample_ghost:
-                        event_mask_ppn1 = result['ghost_mask1'][i][ppn1_batch_index].byte().reshape((-1,))
+                        event_mask_ppn1 = result['ghost_mask1'][i][ppn1_batch_index].bool().reshape((-1,))
                         event_ppn1_data = event_ppn1_data[event_mask_ppn1]
                         event_ppn1_scores = event_ppn1_scores[event_mask_ppn1]
                         if event_mask_ppn1.int().sum() == 0:
@@ -377,7 +377,7 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                         neg_sample_index = torch.randperm(positives.nelement() - num_positives)[:self._sampling_factor*max(num_positives, 1)]
                         neg_index = torch.nonzero(1-positives.long())[neg_sample_index]
 
-                        index = positives.byte()
+                        index = positives.bool()
                         index[neg_index] = True
 
                         if self._near_sampling:
@@ -441,7 +441,7 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                         neg_sample_index = torch.randperm(num_negatives_ppn1)[:self._sampling_factor*max(num_positives_ppn1, 1)]
                         neg_index = torch.nonzero(1-positives_ppn1.long())[neg_sample_index]
 
-                        index = positives_ppn1.byte()
+                        index = positives_ppn1.bool()
                         index[neg_index] = True
 
                         if self._near_sampling:
@@ -454,7 +454,7 @@ class PPNLoss(torch.nn.modules.loss._Loss):
                         neg_sample_index2 = torch.randperm(num_negatives_ppn2)[:20*max(num_positives_ppn2, 1)]
                         neg_index = torch.nonzero(1-positives_ppn2.long())[neg_sample_index2]
 
-                        index = positives_ppn2.byte()
+                        index = positives_ppn2.bool()
                         index[neg_index] = True
 
                         if self._near_sampling:
